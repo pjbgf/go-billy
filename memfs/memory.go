@@ -27,7 +27,7 @@ type Memory struct {
 }
 
 // New returns a new Memory filesystem.
-func New() billy.Filesystem {
+func New(opts ...Option) billy.Filesystem {
 	fs := &Memory{s: newStorage()}
 	fs.s.New("/", 0755|os.ModeDir, 0)
 	return chroot.New(fs, string(separator))
