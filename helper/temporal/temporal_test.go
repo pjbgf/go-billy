@@ -12,6 +12,26 @@ import (
 
 func Test(t *testing.T) { TestingT(t) }
 
+var _ = Suite(&TemporalSuiteLegacy{})
+
+type TemporalSuiteLegacy struct {
+	test.FilesystemSuite
+}
+
+func (s *TemporalSuiteLegacy) SetUpTest(c *C) {
+	fs := New(memfs.New(memfs.WithLegacy()), "foo")
+	s.FilesystemSuite = test.NewFilesystemSuite(fs)
+}
+
+func (s *TemporalSuiteLegacy) TestTempFileDefaultPath(c *C) {
+	fs := New(memfs.New(memfs.WithLegacy()), "foo")
+	f, err := fs.TempFile("", "bar")
+	c.Assert(err, IsNil)
+	c.Assert(f.Close(), IsNil)
+
+	c.Assert(strings.HasPrefix(f.Name(), fs.Join("foo", "bar")), Equals, true)
+}
+
 var _ = Suite(&TemporalSuite{})
 
 type TemporalSuite struct {

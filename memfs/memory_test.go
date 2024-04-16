@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/go-git/go-billy/v5"
@@ -201,6 +203,12 @@ func TestSymlink(t *testing.T) {
 			want:   "/bar",
 		},
 		{
+			name:    "duplicate symlink",
+			target:  "/bar",
+			link:    "/foo",
+			wantErr: os.ErrExist.Error(),
+		},
+		{
 			name:   "self-targeting symlink",
 			target: "/self",
 			link:   "/self",
@@ -235,6 +243,20 @@ func TestSymlink(t *testing.T) {
 			target: "\\net\\bar",
 			link:   "/net",
 			want:   "\\net\\bar",
+		},
+		{
+			name:   "target too long",
+			target: strings.Repeat("a", 4097),
+			link:   "/ok",
+			wantErr: fmt.Sprintf("symlink %s %s: file name too long",
+				strings.Repeat("a", 4097), "/ok"),
+		},
+		{
+			name:   "link too long",
+			target: "/ok",
+			link:   strings.Repeat("a", 4097),
+			wantErr: fmt.Sprintf("path /%s: file name too long",
+				strings.Repeat("a", 4097)),
 		},
 	}
 
@@ -286,6 +308,16 @@ func TestJoin(t *testing.T) {
 		{name: "c: abs", elem: []string{"/C:\\", "a", "b", "c"}, want: "/C:\\/a/b/c"},
 		{name: "\\ rel", elem: []string{"\\\\", "a", "b", "c"}, want: "\\\\/a/b/c"},
 		{name: "\\ abs", elem: []string{"/\\\\", "a", "b", "c"}, want: "/\\\\/a/b/c"},
+
+		{name: "[legacy] empty", legacy: true, elem: []string{""}, want: filepath.Join("")},
+		{name: "[legacy] c:", legacy: true, elem: []string{"C:"}, want: filepath.Join("C:")},
+		{name: "[legacy] simple rel", legacy: true, elem: []string{"a", "b", "c"}, want: filepath.Join("a", "b", "c")},
+		{name: "[legacy] simple abs slash", legacy: true, elem: []string{string(filepath.Separator), "a", "b", "c"}, want: filepath.Join(string(filepath.Separator), "a", "b", "c")},
+		{name: "[legacy] simple rel/abs backslash", legacy: true, elem: []string{"\\", "a", "b", "c"}, want: filepath.Join("\\", "a", "b", "c")},
+		{name: "[legacy] c: rellegacy: true, ", elem: []string{"C:\\", "a", "b", "c"}, want: filepath.Join("C:\\", "a", "b", "c")},
+		{name: "[legacy] c: abslegacy: true, ", elem: []string{string(filepath.Separator), "C:\\", "a", "b", "c"}, want: filepath.Join(string(filepath.Separator), "C:\\", "a", "b", "c")},
+		{name: "[legacy] \\ rel", legacy: true, elem: []string{"\\\\", "a", "b", "c"}, want: filepath.Join("\\\\", "a", "b", "c")},
+		{name: "[legacy] \\ abs", legacy: true, elem: []string{string(filepath.Separator), "\\\\", "a", "b", "c"}, want: filepath.Join(string(filepath.Separator), "\\\\", "a", "b", "c")},
 	}
 
 	// Cater for memfs not being os-agnostic.
@@ -303,6 +335,10 @@ func TestJoin(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := []Option{}
+			if tc.legacy {
+				opts = append(opts, WithLegacy())
+			}
+
 			got := New(opts...).Join(tc.elem...)
 			assert.Equal(t, tc.want, got)
 		})

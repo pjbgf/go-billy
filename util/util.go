@@ -1,6 +1,7 @@
 package util
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -33,14 +34,14 @@ func removeAll(fs billy.Basic, path string) error {
 
 	// Simple case: if Remove works, we're done.
 	err := fs.Remove(path)
-	if err == nil || os.IsNotExist(err) {
+	if err == nil || errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 
 	// Otherwise, is this a directory we need to recurse into?
 	dir, serr := fs.Stat(path)
 	if serr != nil {
-		if os.IsNotExist(serr) {
+		if errors.Is(serr, os.ErrNotExist) {
 			return nil
 		}
 
@@ -60,7 +61,7 @@ func removeAll(fs billy.Basic, path string) error {
 	// Directory.
 	fis, err := dirfs.ReadDir(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			// Race. It was deleted between the Lstat and Open.
 			// Return nil per RemoveAll's docs.
 			return nil
@@ -81,7 +82,7 @@ func removeAll(fs billy.Basic, path string) error {
 
 	// Remove directory.
 	err1 := fs.Remove(path)
-	if err1 == nil || os.IsNotExist(err1) {
+	if err1 == nil || errors.Is(err1, os.ErrNotExist) {
 		return nil
 	}
 

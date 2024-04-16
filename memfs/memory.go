@@ -17,24 +17,34 @@ import (
 	"github.com/go-git/go-billy/v5/util"
 )
 
-const separator = filepath.Separator
+var (
+	ErrFileNameTooLong = errors.New("file name too long")
+	errNotLink         = errors.New("not a link")
+)
 
-// Memory a very convenient filesystem based on memory files
+// Memory a very convenient filesystem based on memory files.
 type Memory struct {
 	s *storage
 
+	separator string
+	opts      *options
 	tempCount int
 }
 
 // New returns a new Memory filesystem.
 func New(opts ...Option) billy.Filesystem {
-	fs := &Memory{s: newStorage()}
-	fs.s.New("/", 0755|os.ModeDir, 0)
-	return chroot.New(fs, string(separator))
+	o := newOptions()
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	fs := &Memory{s: newStorage(o), opts: o}
+	fs.s.New(o.separator(), o.dirMode|os.ModeDir, 0)
+	return chroot.New(fs, o.separator())
 }
 
 func (fs *Memory) Create(filename string) (billy.File, error) {
-	return fs.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+	return fs.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, fs.opts.fileMode)
 }
 
 func (fs *Memory) Open(filename string) (billy.File, error) {
@@ -72,26 +82,31 @@ func (fs *Memory) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	return f.Duplicate(filename, perm, flag), nil
 }
 
-var errNotLink = errors.New("not a link")
-
 func (fs *Memory) resolveLink(fullpath string, f *file) (target string, isLink bool) {
 	if !isSymlink(f.mode) {
 		return fullpath, false
 	}
 
 	target = string(f.content.bytes)
-	if !isAbs(target) {
+	if !fs.isAbs(target) {
 		target = fs.Join(filepath.Dir(fullpath), target)
 	}
 
 	return target, true
 }
 
-// On Windows OS, IsAbs validates if a path is valid based on if stars with a
-// unit (eg.: `C:\`)  to assert that is absolute, but in this mem implementation
-// any path starting by `separator` is also considered absolute.
-func isAbs(path string) bool {
-	return filepath.IsAbs(path) || strings.HasPrefix(path, string(separator))
+// isAbs behaves like unix, returning true if path has a slash prefix.
+//
+// In Legacy Mode:
+//
+//	On Windows OS, IsAbs validates if a path is valid based on if stars with a
+//	unit (eg.: `C:\`)  to assert that is absolute, but in this mem implementation
+//	any path starting by `separator` is also considered absolute.
+func (fs *Memory) isAbs(path string) bool {
+	if fs.opts.legacy {
+		return filepath.IsAbs(path) || strings.HasPrefix(path, string(filepath.Separator))
+	}
+	return strings.HasPrefix(path, fs.opts.separator())
 }
 
 func (fs *Memory) Stat(filename string) (os.FileInfo, error) {
@@ -177,12 +192,37 @@ func (fs *Memory) Remove(filename string) error {
 	return fs.s.Remove(filename)
 }
 
+func (fs *Memory) RemoveAll(path string) error {
+	return fs.s.RemoveAll(path)
+}
+
+// Join joins the elements with a slashed separated path which is analogous to
+// how unix behaves.
+//
+// In Legacy Mode:
+//
+// Falls back to Go's filepath.Join, which works differently depending on the
+// OS where the code is being executed.
 func (fs *Memory) Join(elem ...string) string {
-	return filepath.Join(elem...)
+	if fs.opts.legacy {
+		return filepath.Join(elem...)
+	}
+
+	for i, el := range elem {
+		if el != "" {
+			clean := filepath.Clean(strings.Join(elem[i:], fs.opts.separator()))
+			return filepath.ToSlash(clean)
+		}
+	}
+	return ""
 }
 
 func (fs *Memory) Symlink(target, link string) error {
-	_, err := fs.Stat(link)
+	if len(target) > fs.opts.maxSymlink() {
+		return fmt.Errorf("symlink %s %s: %w", target, link, ErrFileNameTooLong)
+	}
+
+	_, err := fs.Lstat(link)
 	if err == nil {
 		return os.ErrExist
 	}
@@ -191,7 +231,7 @@ func (fs *Memory) Symlink(target, link string) error {
 		return err
 	}
 
-	return util.WriteFile(fs, link, []byte(target), 0777|os.ModeSymlink)
+	return util.WriteFile(fs, link, []byte(target), fs.opts.symlinkMode|os.ModeSymlink)
 }
 
 func (fs *Memory) Readlink(link string) (string, error) {

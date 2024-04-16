@@ -6,30 +6,36 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
 type storage struct {
 	files    map[string]*file
 	children map[string]map[string]*file
+	opts     *options
 }
 
-func newStorage() *storage {
+func newStorage(o *options) *storage {
 	return &storage{
 		files:    make(map[string]*file, 0),
 		children: make(map[string]map[string]*file, 0),
+		opts:     o,
 	}
 }
 
 func (s *storage) Has(path string) bool {
-	path = clean(path)
+	path = s.clean(path)
 
 	_, ok := s.files[path]
 	return ok
 }
 
 func (s *storage) New(path string, mode os.FileMode, flag int) (*file, error) {
-	path = clean(path)
+	path = s.clean(path)
+	if len(path) > s.opts.maxPath() {
+		return nil, fmt.Errorf("path %s: %w", path, ErrFileNameTooLong)
+	}
 	if s.Has(path) {
 		if !s.MustGet(path).mode.IsDir() {
 			return nil, fmt.Errorf("file already exists %q", path)
@@ -54,8 +60,8 @@ func (s *storage) New(path string, mode os.FileMode, flag int) (*file, error) {
 
 func (s *storage) createParent(path string, mode os.FileMode, f *file) error {
 	base := filepath.Dir(path)
-	base = clean(base)
-	if f.Name() == string(separator) {
+	base = s.clean(base)
+	if f.Name() == s.opts.separator() {
 		return nil
 	}
 
@@ -72,7 +78,7 @@ func (s *storage) createParent(path string, mode os.FileMode, f *file) error {
 }
 
 func (s *storage) Children(path string) []*file {
-	path = clean(path)
+	path = s.clean(path)
 
 	l := make([]*file, 0)
 	for _, f := range s.children[path] {
@@ -92,7 +98,7 @@ func (s *storage) MustGet(path string) *file {
 }
 
 func (s *storage) Get(path string) (*file, bool) {
-	path = clean(path)
+	path = s.clean(path)
 	if !s.Has(path) {
 		return nil, false
 	}
@@ -102,8 +108,8 @@ func (s *storage) Get(path string) (*file, bool) {
 }
 
 func (s *storage) Rename(from, to string) error {
-	from = clean(from)
-	to = clean(to)
+	from = s.clean(from)
+	to = s.clean(to)
 
 	if !s.Has(from) {
 		return os.ErrNotExist
@@ -112,7 +118,7 @@ func (s *storage) Rename(from, to string) error {
 	move := [][2]string{{from, to}}
 
 	for pathFrom := range s.files {
-		if pathFrom == from || !filepath.HasPrefix(pathFrom, from) {
+		if pathFrom == from || !strings.HasPrefix(pathFrom, from) {
 			continue
 		}
 
@@ -149,7 +155,7 @@ func (s *storage) move(from, to string) error {
 }
 
 func (s *storage) Remove(path string) error {
-	path = clean(path)
+	path = s.clean(path)
 
 	f, has := s.Get(path)
 	if !has {
@@ -168,8 +174,16 @@ func (s *storage) Remove(path string) error {
 	return nil
 }
 
-func clean(path string) string {
-	return filepath.Clean(filepath.FromSlash(path))
+func (s *storage) RemoveAll(path string) error {
+	return s.Remove(path)
+}
+
+func (s *storage) clean(path string) string {
+	cleaned := filepath.Clean(path)
+	if !s.opts.legacy {
+		cleaned = filepath.ToSlash(cleaned)
+	}
+	return cleaned
 }
 
 type content struct {
